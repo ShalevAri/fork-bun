@@ -866,6 +866,207 @@ pub fn isWindowsAbsPathWithLeadingSlashes(dep: string) ?string {
     return null;
 }
 
+/// Convert NpaSpec to Dependency.Version for git repositories
+fn convertGitSpec(
+    spec: *const npm_package_arg.NpaSpec,
+    sliced: *const SlicedString,
+) ?Version {
+    const fetch_spec = spec.fetchSpec() orelse return null;
+
+    // Check if this is a GitHub hosted repo
+    if (spec.type == .git and spec.type.git.hosted != null) {
+        const hosted = spec.type.git.hosted.?;
+        if (hosted.host_provider == .github) {
+            // Convert to .github type
+            return .{
+                .literal = sliced.value(),
+                .value = .{
+                    .github = .{
+                        .owner = if (hosted.user) |u| sliced.sub(u).value() else String.from(""),
+                        .repo = sliced.sub(hosted.project).value(),
+                        .committish = if (hosted.committish) |c| sliced.sub(c).value() else String.from(""),
+                        .resolved = String.from(""),
+                        .package_name = if (spec.name) |n| sliced.sub(n).value() else String.from(""),
+                    },
+                },
+                .tag = .github,
+            };
+        }
+    }
+
+    // Generic git repo
+    const committish = if (spec.type == .git and spec.type.git.attrs != null)
+        if (spec.type.git.attrs.?.committish) |c| sliced.sub(c).value() else String.from("")
+    else
+        String.from("");
+
+    return .{
+        .literal = sliced.value(),
+        .value = .{
+            .git = .{
+                .owner = String.from(""),
+                .repo = sliced.sub(fetch_spec).value(),
+                .committish = committish,
+                .resolved = String.from(""),
+                .package_name = if (spec.name) |n| sliced.sub(n).value() else String.from(""),
+            },
+        },
+        .tag = .git,
+    };
+}
+
+/// Convert NpaSpec to Dependency.Version for file/directory specs
+fn convertFileSpec(
+    spec: *const npm_package_arg.NpaSpec,
+    sliced: *const SlicedString,
+) ?Version {
+    const fetch_spec = spec.fetchSpec() orelse return null;
+
+    if (spec.type == .file) {
+        // It's a tarball
+        return .{
+            .tag = .tarball,
+            .literal = sliced.value(),
+            .value = .{ .tarball = .{
+                .uri = .{ .local = sliced.sub(fetch_spec).value() },
+                .package_name = if (spec.name) |n| sliced.sub(n).value() else String.from(""),
+            } },
+        };
+    } else {
+        // It's a directory
+        return .{
+            .value = .{ .folder = sliced.sub(fetch_spec).value() },
+            .tag = .folder,
+            .literal = sliced.value(),
+        };
+    }
+}
+
+/// Convert NpaSpec to Dependency.Version for npm version/range specs
+fn convertNpmSpec(
+    allocator: std.mem.Allocator,
+    alias: String,
+    alias_hash: ?PackageNameHash,
+    spec: *const npm_package_arg.NpaSpec,
+    sliced: *const SlicedString,
+    package_manager: ?*PackageManager,
+) ?Version {
+    const fetch_spec = spec.fetchSpec() orelse "*";
+
+    // Strip single leading v (npa doesn't do this, but Bun does)
+    // v1.0.0 -> 1.0.0
+    const version_str = if (fetch_spec.len > 1 and fetch_spec[0] == 'v')
+        fetch_spec[1..]
+    else
+        fetch_spec;
+
+    // Parse with Semver
+    const version = Semver.Query.parse(
+        allocator,
+        version_str,
+        sliced.sub(version_str),
+    ) catch |err| {
+        switch (err) {
+            error.OutOfMemory => bun.outOfMemory(),
+        }
+    };
+
+    // Determine if this is an alias
+    const name = if (spec.type == .alias) blk: {
+        if (spec.type.alias.sub_spec.name) |n| {
+            break :blk sliced.sub(n).value();
+        }
+        break :blk alias;
+    } else if (spec.name) |n|
+        sliced.sub(n).value()
+    else
+        alias;
+
+    const is_alias = spec.type == .alias or
+        (spec.name != null and alias_hash != null and !name.eql(alias, sliced.buf, sliced.buf));
+
+    const result = Version{
+        .literal = sliced.value(),
+        .value = .{
+            .npm = .{
+                .is_alias = is_alias,
+                .name = name,
+                .version = version,
+            },
+        },
+        .tag = .npm,
+    };
+
+    if (is_alias and alias_hash != null) {
+        if (package_manager) |pm| {
+            pm.known_npm_aliases.put(
+                allocator,
+                alias_hash.?,
+                result,
+            ) catch unreachable;
+        }
+    }
+
+    return result;
+}
+
+/// Convert NpaSpec to Dependency.Version for dist-tag specs
+fn convertDistTagSpec(
+    alias: String,
+    spec: *const npm_package_arg.NpaSpec,
+    sliced: *const SlicedString,
+) ?Version {
+    const name = if (spec.name) |n| sliced.sub(n).value() else alias;
+    const tag = spec.fetchSpec() orelse "latest";
+
+    return .{
+        .literal = sliced.value(),
+        .value = .{
+            .dist_tag = .{
+                .name = name,
+                .tag = sliced.sub(tag).value(),
+            },
+        },
+        .tag = .dist_tag,
+    };
+}
+
+/// Convert NpaSpec to Dependency.Version for remote tarball specs
+fn convertRemoteSpec(
+    spec: *const npm_package_arg.NpaSpec,
+    sliced: *const SlicedString,
+) ?Version {
+    const fetch_spec = spec.fetchSpec() orelse return null;
+
+    return .{
+        .tag = .tarball,
+        .literal = sliced.value(),
+        .value = .{ .tarball = .{
+            .uri = .{ .remote = sliced.sub(fetch_spec).value() },
+            .package_name = if (spec.name) |n| sliced.sub(n).value() else String.from(""),
+        } },
+    };
+}
+
+/// Convert NpaSpec to Dependency.Version
+fn npaSpecToVersion(
+    allocator: std.mem.Allocator,
+    alias: String,
+    alias_hash: ?PackageNameHash,
+    spec: *const npm_package_arg.NpaSpec,
+    sliced: *const SlicedString,
+    package_manager: ?*PackageManager,
+) ?Version {
+    return switch (spec.type) {
+        .git => convertGitSpec(spec, sliced),
+        .file, .directory => convertFileSpec(spec, sliced),
+        .version, .range => convertNpmSpec(allocator, alias, alias_hash, spec, sliced, package_manager),
+        .tag => convertDistTagSpec(alias, spec, sliced),
+        .alias => convertNpmSpec(allocator, alias, alias_hash, spec, sliced, package_manager),
+        .remote => convertRemoteSpec(spec, sliced),
+    };
+}
+
 pub inline fn parse(
     allocator: std.mem.Allocator,
     alias: String,
@@ -876,7 +1077,28 @@ pub inline fn parse(
     manager: ?*PackageManager,
 ) ?Version {
     const dep = std.mem.trimLeft(u8, dependency, " \t\n\r");
-    return parseWithTag(allocator, alias, alias_hash, dep, Version.Tag.infer(dep), sliced, log, manager);
+
+    // Handle Bun-specific protocols that npm_package_arg doesn't know about
+    if (strings.hasPrefixComptime(dep, "workspace:")) {
+        return parseWithTag(allocator, alias, alias_hash, dep, .workspace, sliced, log, manager);
+    }
+    if (strings.hasPrefixComptime(dep, "catalog:")) {
+        return parseWithTag(allocator, alias, alias_hash, dep, .catalog, sliced, log, manager);
+    }
+
+    // Use npm_package_arg for everything else
+    const where = "."; // Use current directory as base
+
+    var spec = npm_package_arg.npa(allocator, dep, where) catch |err| {
+        if (log) |l| {
+            l.addErrorFmt(null, logger.Loc.Empty, allocator, "Failed to parse dependency \"{s}\": {s}", .{ dep, @errorName(err) }) catch {};
+        }
+        // Fall back to old parser on error
+        return parseWithTag(allocator, alias, alias_hash, dep, Version.Tag.infer(dep), sliced, log, manager);
+    };
+    defer spec.deinit();
+
+    return npaSpecToVersion(allocator, alias, alias_hash, &spec, sliced, manager);
 }
 
 pub fn parseWithOptionalTag(
@@ -1457,6 +1679,7 @@ pub const Behavior = packed struct(u8) {
 const string = []const u8;
 
 const Environment = @import("../env.zig");
+const npm_package_arg = @import("./npm_package_arg.zig");
 const std = @import("std");
 const Repository = @import("./repository.zig").Repository;
 
