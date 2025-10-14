@@ -399,7 +399,10 @@ pub const NpaSpec = struct {
                 const fetch_spec_temp = if (protocol_type == .git_plus_file) blk: {
                     const after_protocol = raw_spec_mut["git+file://".len..];
 
-                    if (pathlib.startsWithWindowsLetter(after_protocol, .{ .run_on = .only_on_windows })) {
+                    if (pathlib.startsWithWindowsLetter(
+                        after_protocol,
+                        .{ .run_on = .only_on_windows },
+                    )) {
                         const parts = try SpecStrUtils.extractHostAndPathnameWithLowercaseHost(
                             allocator,
                             parsed_url,
