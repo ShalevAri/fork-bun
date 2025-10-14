@@ -396,7 +396,7 @@ pub const RuntimeTranspilerCache = struct {
             return buf[0..len :0];
         }
 
-        if (bun.getenvZ("XDG_CACHE_HOME")) |dir| {
+        if (bun.EnvVar.xdg_cache_home.get()) |dir| {
             const parts = &[_][]const u8{ dir, "bun", "@t@" };
             return bun.fs.FileSystem.instance.absBufZ(parts, buf);
         }

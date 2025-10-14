@@ -1,6 +1,7 @@
 //! Unified module for controlling and managing environment variables in Bun.
 
 pub const home = new("home", "HOME", "UserProfile");
+pub const xdg_cache_home = new("xdg_cache_home", "XDG_CACHE_HOME", null);
 
 fn new(
     comptime name: []const u8,

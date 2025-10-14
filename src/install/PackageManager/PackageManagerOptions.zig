@@ -184,14 +184,14 @@ pub fn openGlobalDir(explicit_global_dir: string) !std.fs.Dir {
     }
 
     if (!Environment.isWindows) {
-        if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
+        if (bun.EnvVar.xdg_cache_home.get() orelse bun.EnvVar.home.get()) |home_dir| {
             var buf: bun.PathBuffer = undefined;
             var parts = [_]string{ ".bun", "install", "global" };
             const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
             return try std.fs.cwd().makeOpenPath(path, .{});
         }
     } else {
-        if (bun.getenvZ("USERPROFILE")) |home_dir| {
+        if (bun.EnvVar.home.get()) |home_dir| {
             var buf: bun.PathBuffer = undefined;
             var parts = [_]string{ ".bun", "install", "global" };
             const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
@@ -224,7 +224,7 @@ pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
         return try std.fs.cwd().makeOpenPath(path, .{});
     }
 
-    if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.EnvVar.home.get()) |home_dir| {
+    if (bun.EnvVar.xdg_cache_home.get() orelse bun.EnvVar.home.get()) |home_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{
             ".bun",
