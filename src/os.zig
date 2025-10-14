@@ -277,5 +277,5 @@ pub const HomeDir = struct {
 };
 
 const bun = @import("bun");
-const std = @import("std");
 const pathlib = @import("./paths/Path.zig");
+const std = @import("std");
