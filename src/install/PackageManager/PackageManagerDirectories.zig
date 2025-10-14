@@ -165,7 +165,7 @@ pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) Ca
         return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
     }
 
-    if (bun.EnvVar.xdg_cache_home.get()) |dir| {
+    if (bun.EnvVar.xdg_cache_home.platformGet()) |dir| {
         var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
         return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
     }

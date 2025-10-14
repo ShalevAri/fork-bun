@@ -1,6 +1,6 @@
 //! Unified module for controlling and managing environment variables in Bun.
 
-pub const home = new("home", "HOME", "UserProfile");
+pub const home = new("home", "HOME", "USERPROFILE");
 pub const xdg_cache_home = new("xdg_cache_home", "XDG_CACHE_HOME", null);
 
 fn new(
@@ -26,6 +26,23 @@ fn new(
         var value: std.atomic.Value(PtrType) = std.atomic.Value(PtrType).init(null_sentinel);
         var value_len: std.atomic.Value(u64) = .init(std.math.maxInt(LengthType));
 
+        /// Attempt to retrieve the value of the environment variable for the current platform, if
+        /// the current platform has a supported definition. Returns null otherwise, unlike the
+        /// other methods which will fail at compile time if the platform is unsupported.
+        pub fn platformGet() ?[]const u8 {
+            if (bun.Environment.isPosix) {
+                if (posix_key == null) return null;
+            }
+
+            if (bun.Environment.isWindows) {
+                if (windows_key == null) return null;
+            }
+
+            return get();
+        }
+
+        /// Retrieve the value of the environment variable, loading it if necessary.
+        /// Fails if the current platform is unsupported.
         pub fn get() ?[]const u8 {
             assertPlatformSupported();
 
@@ -39,6 +56,8 @@ fn new(
             return (v orelse return null)[0..len];
         }
 
+        /// Retrieve the value of the environment variable, reloading it from the environment.
+        /// Fails if the current platform is unsupported.
         pub fn getForceReload() ?[]const u8 {
             assertPlatformSupported();
 
@@ -60,8 +79,8 @@ fn new(
         }
 
         fn assertPlatformSupported() void {
-            const missing_key_fmt = "Cannot retrieve the value of " ++ name ++ " for {} " ++
-                "since no {} key is associated with it.";
+            const missing_key_fmt = "Cannot retrieve the value of " ++ name ++ " for {s} " ++
+                "since no {s} key is associated with it.";
             if (comptime bun.Environment.isWindows and windows_key == null) {
                 @compileError(std.fmt.comptimePrint(missing_key_fmt, .{ "Windows", "Windows" }));
             } else if (posix_key == null) {
